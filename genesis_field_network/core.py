@@ -760,3 +760,58 @@ class GenesisFieldNetwork:
             'morph_count': len(self.morpher.morph_log),
             'dissonance_history': self.adapter.dissonance_history[-10:],
         }
+
+    def save_state(self) -> Dict:
+        """Serialize full network state to a dict for reproducibility."""
+        field_states = []
+        for f in self.fields:
+            field_states.append({
+                'manifold_dim': f.manifold_dim,
+                'num_harmonics': f.num_harmonics,
+                'position': f.position.tolist(),
+                'frequencies': f.frequencies.tolist(),
+                'phases': f.phases.tolist(),
+                'amplitudes': f.amplitudes.tolist(),
+                'curvature': f.curvature.tolist(),
+                'energy': float(f.energy),
+                'resonance_history': list(f.resonance_history),
+            })
+        return {
+            'input_dim': self.input_dim,
+            'output_dim': self.output_dim,
+            'manifold_dim': self.manifold_dim,
+            'num_harmonics': self.num_harmonics,
+            'num_probe_points': self.num_probe_points,
+            'input_projection': self.input_projection.tolist(),
+            'output_projection': self.output_projection.tolist(),
+            'probe_points': self.probe_points.tolist(),
+            'fields': field_states,
+            'morph_log': self.morpher.morph_log,
+            'dissonance_history': self.adapter.dissonance_history,
+        }
+
+    def load_state(self, state: Dict):
+        """Restore full network state from a dict."""
+        self.input_dim = state['input_dim']
+        self.output_dim = state['output_dim']
+        self.manifold_dim = state['manifold_dim']
+        self.num_harmonics = state['num_harmonics']
+        self.num_probe_points = state['num_probe_points']
+        self.input_projection = np.array(state['input_projection'])
+        self.output_projection = np.array(state['output_projection'])
+        self.probe_points = np.array(state['probe_points'])
+        self.morpher.morph_log = list(state['morph_log'])
+        self.adapter.dissonance_history = list(state['dissonance_history'])
+
+        self.fields = []
+        for fs in state['fields']:
+            f = FieldElement(fs['manifold_dim'], fs['num_harmonics'])
+            f.position = np.array(fs['position'])
+            f.frequencies = np.array(fs['frequencies'])
+            f.phases = np.array(fs['phases'])
+            f.amplitudes = np.array(fs['amplitudes'])
+            f.curvature = np.array(fs['curvature'])
+            f.energy = fs['energy']
+            f.resonance_history = list(fs['resonance_history'])
+            f._curvature_dirty = True
+            self.fields.append(f)
