@@ -1,5 +1,5 @@
 """
-Genesis Field Network (GFN) v2 — Core Architecture
+Field Interference Network — Core Architecture
 ====================================================
 
 An exploratory prototype investigating field-based resonance dynamics
@@ -19,7 +19,7 @@ Honest note on what this IS and ISN'T:
 - It ISN'T: a replacement for neural networks on practical tasks
 - The input/output projections are linear maps (this is acknowledged)
 
-Author: Genesis Field Network Project
+Author: Field Interference Network Project
 License: MIT
 """
 

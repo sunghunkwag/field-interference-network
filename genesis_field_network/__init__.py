@@ -1,7 +1,7 @@
 """
-Genesis Field Network (GFN)
+Field Interference Network
 ============================
-A radically new computational paradigm beyond deep learning.
+Experimental phase-modulated field interference computation.
 """
 from genesis_field_network.core import (
     FieldElement,
@@ -10,7 +10,7 @@ from genesis_field_network.core import (
     TopologicalMorpher,
     GenesisFieldNetwork,
 )
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "FieldElement",
     "ResonanceCoupler",

@@ -1,5 +1,5 @@
 """
-Genesis Field Network - Demo
+Field Interference Network - Demo
 ==============================
 Demonstrates GFN on simple tasks using phase-modulated
 field interference — no neurons, no backpropagation through fields.
@@ -139,7 +139,7 @@ def demo_classification():
 
 
 if __name__ == "__main__":
-    print("Genesis Field Network - Demonstration")
+    print("Field Interference Network - Demonstration")
     print("Phase-modulated field interference computation")
     print()
 

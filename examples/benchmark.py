@@ -1,5 +1,5 @@
 """
-Genesis Field Network - Honest Benchmark Comparison
+Field Interference Network - Honest Benchmark Comparison
 =====================================================
 Compares GFN against simple baselines to establish where it stands.
 
@@ -160,7 +160,7 @@ def run_benchmark(task_fn, models: Dict, n_runs: int = 5, epochs: int = 300):
 def main():
     from genesis_field_network.core import GenesisFieldNetwork
 
-    print("Genesis Field Network — Honest Benchmark Comparison")
+    print("Field Interference Network — Honest Benchmark Comparison")
     print("=" * 65)
     print("Baselines: Linear Regression, 2-Layer MLP (numpy)")
     print("All models use numpy only (no GPU, no PyTorch/TF)")

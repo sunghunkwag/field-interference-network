@@ -12,7 +12,7 @@ from genesis_field_network.core import GenesisFieldNetwork
 
 
 def main():
-    print("Genesis Field Network — Reproducibility Demo")
+    print("Field Interference Network — Reproducibility Demo")
     print("=" * 55)
 
     # Train XOR
