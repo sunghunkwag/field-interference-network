@@ -203,14 +203,16 @@ class ResonanceCoupler:
         return responses  # (M, N)
 
     def propagate(self, fields: List[FieldElement],
-                  input_excitation: np.ndarray) -> np.ndarray:
+                  input_excitation: np.ndarray,
+                  coupling: Optional[np.ndarray] = None) -> np.ndarray:
         """
         Single-step resonance propagation with input-dependent modulation.
 
         Unlike v1's iterative relaxation (which destroyed input discrimination),
         this uses a single coupling pass that PRESERVES the excitation pattern.
         """
-        coupling = self.compute_coupling_matrix(fields)
+        if coupling is None:
+            coupling = self.compute_coupling_matrix(fields)
         energies = np.array([f.energy for f in fields])
 
         n_input = min(len(input_excitation), len(fields))
@@ -288,7 +290,8 @@ class PhaseAdapter:
     def adapt_fields(self, fields: List[FieldElement],
                      output_pattern: np.ndarray,
                      target_pattern: np.ndarray,
-                     coupler: ResonanceCoupler):
+                     coupler: ResonanceCoupler,
+                     coupling: Optional[np.ndarray] = None):
         """
         Adapt field parameters via Kuramoto-inspired local synchronization
         PLUS per-field stochastic hill climbing.
@@ -299,6 +302,9 @@ class PhaseAdapter:
 
         Position/frequency: small perturbation-test-accept cycle
         (single-sample hill climbing).
+
+        Vectorized: inner loops replaced with numpy matrix ops on
+        coupling matrix and phase arrays.
         """
         dissonance = self.compute_dissonance(output_pattern, target_pattern)
 
@@ -307,55 +313,82 @@ class PhaseAdapter:
 
         # Error signal (scalar) drives adaptation intensity
         error_magnitude = np.sqrt(dissonance)
-        coupling = coupler.compute_coupling_matrix(fields)
+        if coupling is None:
+            coupling = coupler.compute_coupling_matrix(fields)
 
+        n = len(fields)
+        num_h = fields[0].num_harmonics
+
+        # ── Gather all phases into a (n, H) array ──
+        all_phases = np.array([f.phases for f in fields])  # (n, H)
+
+        # ── Vectorized Kuramoto phase sync ──
+        # For each field i, harmonic h: sum over all other fields j, harmonics oh:
+        #   coupling[i,j] * sin(phases[j, oh] - phases[i, h])
+        # = coupling[i,j] * sum_oh sin(phases[j, oh] - phases[i, h])
+        # Phase diffs: for field i, harmonic h, other j:
+        #   sum_oh sin(phases[j, oh] - phases[i, h])
+        # = sum_oh [sin(phases[j,oh])cos(phases[i,h]) - cos(phases[j,oh])sin(phases[i,h])]
+        sin_phases = np.sin(all_phases)  # (n, H)
+        cos_phases = np.cos(all_phases)  # (n, H)
+        sum_sin = np.sum(sin_phases, axis=1)  # (n,)  sum_oh sin(phases[j, oh])
+        sum_cos = np.sum(cos_phases, axis=1)  # (n,)  sum_oh cos(phases[j, oh])
+
+        # sync_raw[i, h] = sum_j coupling[i,j] * [sum_cos[j]*sin(phi_i_h) subtracted etc]
+        # = cos(phi_i_h) * sum_j coupling[i,j]*sum_sin[j]
+        #   - sin(phi_i_h) * sum_j coupling[i,j]*sum_cos[j]
+        coupled_sum_sin = coupling @ sum_sin  # (n,)
+        coupled_sum_cos = coupling @ sum_cos  # (n,)
+
+        # phase_correction[i, h] = coupled_sum_sin[i]*cos(phi_i_h) - coupled_sum_cos[i]*sin(phi_i_h)
+        phase_correction = (coupled_sum_sin[:, None] * cos_phases -
+                            coupled_sum_cos[:, None] * sin_phases)  # (n, H)
+
+        # Apply phase updates
+        all_phases += self.adaptation_rate * phase_correction * error_magnitude
+        all_phases = all_phases % (2 * np.pi)
+
+        # Write back phases
+        for i, field in enumerate(fields):
+            field.phases = all_phases[i]
+
+        # ── Vectorized frequency perturbation ──
+        all_freqs = np.array([f.frequencies for f in fields])  # (n, H, D)
+        abs_coupling = np.abs(coupling)  # (n, n)
+
+        # freq_direction[i] = sum_j |coupling[i,j]| * (freqs[j] - freqs[i])
+        # = (|coupling| @ freqs_reshaped)[i] - sum_j(|coupling[i,j]|) * freqs[i]
+        coupling_sum = abs_coupling.sum(axis=1)  # (n,)
+        weighted_freqs = np.einsum('ij,jhd->ihd', abs_coupling, all_freqs)  # (n, H, D)
+        freq_direction = weighted_freqs - coupling_sum[:, None, None] * all_freqs
+
+        noise = np.random.randn(n, num_h, fields[0].manifold_dim) * self.es_sigma
+        all_freqs += self.adaptation_rate * (freq_direction * 0.01 + noise * error_magnitude)
+        all_freqs = np.clip(all_freqs, 0.01, 10.0)
+
+        for i, field in enumerate(fields):
+            field.frequencies = all_freqs[i]
+
+        # ── Vectorized position drift ──
+        all_positions = np.array([f.position for f in fields])  # (n, D)
+        # direction[i,j] = position[j] - position[i], normalized
+        diffs = all_positions[None, :, :] - all_positions[:, None, :]  # (n, n, D)
+        dists = np.linalg.norm(diffs, axis=2, keepdims=True) + 1e-8  # (n, n, 1)
+        normed_diffs = diffs / dists  # (n, n, D)
+        # position_gradient[i] = sum_j coupling[i,j] * normed_diff[i,j]
+        position_gradient = np.einsum('ij,ijd->id', coupling, normed_diffs)  # (n, D)
+        all_positions += self.adaptation_rate * position_gradient * error_magnitude * 0.1
+
+        for i, field in enumerate(fields):
+            field.position = all_positions[i]
+
+        # ── Vectorized amplitude redistribution ──
+        # amp_gradient[i, h] = sum_{j!=i} |coupling[i,j]| (same for all h)
+        amp_sum = abs_coupling.sum(axis=1)  # (n,)
         for idx, field in enumerate(fields):
-            # ── Kuramoto phase sync (local, not global gradient) ──
-            phase_correction = np.zeros(field.num_harmonics)
-            for h in range(field.num_harmonics):
-                for other_idx, other in enumerate(fields):
-                    if other_idx != idx:
-                        # Average phase difference across harmonics
-                        for oh in range(min(field.num_harmonics, other.num_harmonics)):
-                            phase_diff = other.phases[oh] - field.phases[h]
-                            sync_force = coupling[idx, other_idx] * np.sin(phase_diff)
-                            phase_correction[h] += sync_force
-
-            # Scale by error: strong error → stronger phase search
-            field.phases += self.adaptation_rate * phase_correction * error_magnitude
-            field.phases = field.phases % (2 * np.pi)
-
-            # ── Stochastic frequency perturbation ──
-            # Directed by coupling: shift toward better-coupled neighbors
-            freq_direction = np.zeros_like(field.frequencies)
-            for other_idx, other in enumerate(fields):
-                if other_idx != idx:
-                    weight = abs(coupling[idx, other_idx])
-                    freq_direction += weight * (other.frequencies - field.frequencies)
-
-            noise = np.random.randn(*field.frequencies.shape) * self.es_sigma
-            field.frequencies += self.adaptation_rate * (
-                freq_direction * 0.01 + noise * error_magnitude
-            )
-            field.frequencies = np.clip(field.frequencies, 0.01, 10.0)
-
-            # ── Position drift toward high-coupling regions ──
-            position_gradient = np.zeros(field.manifold_dim)
-            for other_idx, other in enumerate(fields):
-                if other_idx != idx:
-                    direction = other.position - field.position
-                    dist = np.linalg.norm(direction) + 1e-8
-                    position_gradient += coupling[idx, other_idx] * direction / dist
-
-            field.position += self.adaptation_rate * position_gradient * error_magnitude * 0.1
-
-            # ── Amplitude redistribution based on coupling ──
-            amp_gradient = np.zeros(field.num_harmonics)
-            for h in range(field.num_harmonics):
-                for other_idx in range(len(fields)):
-                    if other_idx != idx:
-                        amp_gradient[h] += abs(coupling[idx, other_idx])
-            if np.sum(amp_gradient) > 0:
+            if amp_sum[idx] > 0:
+                # All harmonics get equal gradient (same coupling weight)
+                amp_gradient = np.full(num_h, amp_sum[idx] / num_h)
                 amp_gradient /= np.sum(amp_gradient)
                 field.amplitudes = (
                     (1 - self.adaptation_rate) * field.amplitudes +
@@ -398,12 +431,14 @@ class TopologicalMorpher:
 
     def morph(self, fields: List[FieldElement],
               coupler: ResonanceCoupler,
-              current_dissonance: float) -> List[FieldElement]:
+              current_dissonance: float,
+              coupling: Optional[np.ndarray] = None) -> List[FieldElement]:
         fields = list(fields)
 
         # MERGE highly resonant fields
         if len(fields) > self.min_fields:
-            coupling = coupler.compute_coupling_matrix(fields)
+            if coupling is None:
+                coupling = coupler.compute_coupling_matrix(fields)
             merged = set()
             new_fields = []
 
@@ -635,14 +670,17 @@ class GenesisFieldNetwork:
         # Forward pass — also capture internal features
         output, features = self._forward_with_features(x)
 
+        # Compute coupling matrix ONCE for this learn step
+        coupling = self.coupler.compute_coupling_matrix(self.fields)
+
         # Field adaptation (genuinely gradient-free)
         dissonance = self.adapter.adapt_fields(
-            self.fields, output, target, self.coupler
+            self.fields, output, target, self.coupler, coupling=coupling
         )
 
         # Topological morphing
         self.fields = self.morpher.morph(
-            self.fields, self.coupler, dissonance
+            self.fields, self.coupler, dissonance, coupling=coupling
         )
 
         # Projection updates (the honest linear-gradient part)
