@@ -40,12 +40,14 @@ where `Δφ_i(x) = x @ W[:, i]` is the input-dependent phase shift. Since `sin(A
 
 ## Benchmark results
 
-| Task | GFN | MLP (backprop) | Linear (analytical) |
-|---|---|---|---|
-| XOR (4 samples, 300 epochs) | **MSE 0.002** | MSE 0.017 | MSE 0.250 |
-| Sine regression (30 samples, 200 epochs) | MSE 0.073 | ~0.001 | MSE 0.320 |
+| Task | GFN | MLP (backprop) | Linear (analytical) | GFN Speed |
+|---|---|---|---|---|
+| XOR (4 samples, 300 epochs) | **MSE 0.010** | MSE 0.019 | MSE 0.250 | 6.4s |
+| Sine regression (30 samples, 200 epochs) | MSE 0.041 | **MSE 0.023** | MSE 0.208 | 71.1s |
+| Two Spirals (100 samples, 300 epochs) | MSE 0.326 | **MSE 0.235** | MSE 0.255 | 61.0s |
+| 3-class classification (90 samples, 300 epochs) | ~79% accuracy | — | — | ~151s |
 
-GFN achieves MLP-comparable accuracy on XOR (actually better on this toy problem), but is ~900× slower due to O(n²) coupling computation. The scientific value is in the alternative computation model, not practical performance.
+GFN achieves MLP-comparable accuracy on XOR (actually better on this toy problem), but is slower due to O(n²) coupling computation. Classification works but with high variance across seeds. The scientific value is in the alternative computation model, not practical performance.
 
 Run the benchmark yourself:
 
@@ -87,12 +89,12 @@ pip install pytest pytest-cov
 python -m pytest tests/ -v --tb=short --cov=genesis_field_network
 ```
 
-68 tests, 97% coverage.
+78 tests, 97% coverage. Includes serialization roundtrip tests and 3-class classification tests.
 
 ## Known limitations
 
-- **O(n²) coupling** limits scalability beyond ~50 fields
-- **Classification** with multiple outputs requires careful hyperparameter tuning
+- **O(n²) coupling** limits scalability beyond ~50 fields (now cached per learn step for ~3.8× speedup)
+- **Classification** works on well-separated clusters but has high variance across seeds
 - **The linear projection updates are the primary learning driver**; field adaptation contributes exploration but not precise optimization
 - **No GPU acceleration** (numpy only, CPU-bound)
 - **Not a practical alternative** to neural networks for real tasks
